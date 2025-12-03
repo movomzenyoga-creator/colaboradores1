@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planilha Automática - Múltiplos Colaboradores</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    margin: 40px;
+    background: linear-gradient(120deg, #f3e8ff, #e0f7ff);
+    color: #333;
+  }
+  h1 {
+    text-align: center;
+    color: #4b0082;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 20px;
+    font-size: 14px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    border: 1px solid #d6bcfa;
+    padding: 6px;
+    text-align: center;
+  }
+  th {
+    background: #6b21a8;
+    color: white;
+  }
+  tr:nth-child(even) { background: #faf5ff; }
+  tr:nth-child(odd) { background: #ffffff; }
+  input, select {
+    padding: 4px;
+    border: 1px solid #a78bfa;
+    border-radius: 4px;
+  }
+  button {
+    margin-top: 15px;
+    padding: 8px 16px;
+    background: #06b6d4;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+  button:hover { background: #0891b2; }
+  #total {
+    margin-top: 15px;
+    font-weight: bold;
+    color: #4b0082;
+  }
+  #colaboradorSelect {
+    margin-right: 8px;
+    border: 1px solid #a78bfa;
+    border-radius: 4px;
+  }
+  #periodo {
+    font-weight: bold;
+    color: #4b0082;
+  }
+  .periodo-container {
+    margin-bottom: 20px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>📋 Planilha de Alunos e Colaboradores</h1>
+
+<div class="periodo-container">
+  <label for="mesInput"><b>Selecionar Mês:</b></label>
+  <input type="month" id="mesInput">
+  <button onclick="salvarPeriodo()">Salvar Período</button>
+  <p id="periodo"></p>
+</div>
+
+<label>Colaborador: </label>
+<select id="colaboradorSelect" onchange="trocarColaborador()"></select>
+<button onclick="novoColaborador()">➕ Novo Colaborador</button>
+<button onclick="removerColaborador()">🗑️ Remover Colaborador</button>
+
+<br><br>
+
+<table id="planilha">
+  <thead>
+    <tr>
+      <th>Aluno</th>
+      <th>Modalidade</th>
+      <th>Tipo</th>
+      <th>Valor Base (R$)</th>
+      <th>Valor Extra (R$)</th>
+      <script>
+        for(let i=1; i<=31; i++){
+          document.write(`<th>${i}</th>`);
+        }
+      </script>
+      <th>Total</th>
+      <th>Ações</th>
+    </tr>
+  </thead>
+  <tbody id="corpoTabela"></tbody>
+</table>
+
+<button onclick="adicionarAluno()">➕ Adicionar Aluno</button>
+<button onclick="calcularTotal()">💰 Calcular Total</button>
+<button onclick="limparQuadradinhos()">🧹 Limpar Quadradinhos</button>
+<button onclick="exportarExcel()">📁 Exportar para Excel</button>
+
+<p id="total"></p>
+
+<script>
+let corpoTabela = document.getElementById("corpoTabela");
+let colaboradorAtual = null;
+
+// -------- PERÍODO MANUAL ---------
+function carregarPeriodo() {
+  let salvo = localStorage.getItem("periodoSelecionado");
+  let mesInput = document.getElementById("mesInput");
+  if (salvo) {
+    mesInput.value = salvo;
+    atualizarPeriodoTexto(salvo);
+  } else {
+    let hoje = new Date();
+    let mes = (hoje.getMonth() + 1).toString().padStart(2, "0");
+    let ano = hoje.getFullYear();
+    mesInput.value = `${ano}-${mes}`;
+    salvarPeriodo();
+  }
+}
+
+function salvarPeriodo() {
+  let mesSelecionado = document.getElementById("mesInput").value;
+  if (!mesSelecionado) return;
+  localStorage.setItem("periodoSelecionado", mesSelecionado);
+  atualizarPeriodoTexto(mesSelecionado);
+}
+
+function atualizarPeriodoTexto(mesSelecionado) {
+  let [ano, mes] = mesSelecionado.split("-");
+  mes = Number(mes) - 1;
+  let inicio = new Date(ano, mes, 5);
+  let fim = new Date(ano, mes + 1, 4);
+  let opcoes = { month: 'short' };
+  document.getElementById("periodo").innerText =
+    `Período: ${inicio.getDate()}/${inicio.toLocaleDateString('pt-BR', opcoes)} a ${fim.getDate()}/${fim.toLocaleDateString('pt-BR', opcoes)}`;
+}
+
+// --------- DADOS E FUNÇÕES ---------
+function carregarColaboradores() {
+  let dadosSalvos = JSON.parse(localStorage.getItem("planilhaMulti")) || {};
+  let select = document.getElementById("colaboradorSelect");
+  select.innerHTML = "";
+  let nomes = Object.keys(dadosSalvos);
+  if (nomes.length === 0) {
+    colaboradorAtual = "Colaborador 1";
+    dadosSalvos[colaboradorAtual] = { alunos: [] };
+    localStorage.setItem("planilhaMulti", JSON.stringify(dadosSalvos));
+  }
+  nomes.forEach(nome => {
+    let opt = document.createElement("option");
+    opt.value = nome;
+    opt.textContent = nome;
+    select.appendChild(opt);
+  });
+  if (!colaboradorAtual) colaboradorAtual = nomes[0];
+  select.value = colaboradorAtual;
+  carregarDados();
+}
+
+function novoColaborador() {
+  let nome = prompt("Digite o nome do novo colaborador:");
+  if (!nome) return;
+  let dados = JSON.parse(localStorage.getItem("planilhaMulti")) || {};
+  if (dados[nome]) {
+    alert("Esse colaborador já existe!");
+    return;
+  }
+  dados[nome] = { alunos: [] };
+  localStorage.setItem("planilhaMulti", JSON.stringify(dados));
+  colaboradorAtual = nome;
+  carregarColaboradores();
+}
+
+function removerColaborador() {
+  if (!confirm(`Remover ${colaboradorAtual} e todos os dados dele?`)) return;
+  let dados = JSON.parse(localStorage.getItem("planilhaMulti")) || {};
+  delete dados[colaboradorAtual];
+  localStorage.setItem("planilhaMulti", JSON.stringify(dados));
+  colaboradorAtual = null;
+  carregarColaboradores();
+}
+
+function trocarColaborador() {
+  colaboradorAtual = document.getElementById("colaboradorSelect").value;
+  carregarDados();
+}
+
+// -------- ADICIONAR ALUNO (atualizado com botão 🧽) --------
+function adicionarAluno(alunoData = null) {
+  let linha = document.createElement("tr");
+  linha.innerHTML = `
+    <td><input type="text" placeholder="Nome do aluno"></td>
+    <td>
+      <select>
+        <option value="Yoga">Yoga</option>
+        <option value="Pilates">Pilates</option>
+      </select>
+    </td>
+    <td>
+      <select class="tipoSelect">
+        <option value="Mensal">Mensal</option>
+        <option value="Gympass">Gympass</option>
+        <option value="TotalPass">TotalPass</option>
+      </select>
+    </td>
+    <td><input type="number" placeholder="Valor base" min="0" step="0.01"></td>
+    <td><input type="number" placeholder="Valor extra" min="0" step="0.01"></td>
+    ${Array.from({length: 31}, () => '<td><input type="checkbox"></td>').join('')}
+    <td class="total">0</td>
+    <td>
+      <button onclick="removerAluno(this)">❌</button>
+      <button onclick="limparLinha(this)">🧽</button>
+    </td>
+  `;
+
+  corpoTabela.appendChild(linha);
+
+  if (alunoData) {
+    let inputs = linha.querySelectorAll('input, select');
+    inputs[0].value = alunoData.nome || "";
+    inputs[1].value = alunoData.modalidade || "Yoga";
+    inputs[2].value = alunoData.tipo || "Mensal";
+    inputs[3].value = alunoData.valorBase || 0;
+    inputs[4].value = alunoData.valorExtra || 0;
+    alunoData.dias.forEach((dia, idx) => inputs[5 + idx].checked = dia);
+  }
+
+  linha.querySelectorAll("input, select").forEach(el => el.addEventListener("input", salvarDados));
+
+  linha.querySelector(".tipoSelect").addEventListener("change", e => {
+    const tipo = e.target.value;
+    const valorBaseInput = linha.querySelectorAll('input[type="number"]')[0];
+    if (tipo === "Gympass") valorBaseInput.value = 7.34;
+    else if (tipo === "TotalPass") valorBaseInput.value = 7.38;
+    else valorBaseInput.value = "";
+    salvarDados();
+    calcularTotal();
+  });
+}
+
+function removerAluno(botao) {
+  botao.closest("tr").remove();
+  salvarDados();
+  calcularTotal();
+}
+
+function calcularTotal() {
+  let linhas = corpoTabela.querySelectorAll("tr");
+  let totalGeral = 0;
+  linhas.forEach(linha => {
+    let valorBase = Number(linha.querySelectorAll('input[type="number"]')[0].value);
+    let valorExtra = Number(linha.querySelectorAll('input[type="number"]')[1].value);
+    let diasMarcados = linha.querySelectorAll('input[type="checkbox"]:checked').length;
+    let totalAluno = (valorBase * diasMarcados) + valorExtra;
+    linha.querySelector(".total").innerText = totalAluno.toFixed(2);
+    totalGeral += totalAluno;
+  });
+  document.getElementById("total").innerText = "💵 Total Final: R$ " + totalGeral.toFixed(2);
+  salvarDados();
+}
+
+function salvarDados() {
+  if (!colaboradorAtual) return;
+  let dados = JSON.parse(localStorage.getItem("planilhaMulti")) || {};
+  let alunos = [];
+  corpoTabela.querySelectorAll("tr").forEach(linha => {
+    let inputs = linha.querySelectorAll("input, select");
+    let aluno = {
+      nome: inputs[0].value,
+      modalidade: inputs[1].value,
+      tipo: inputs[2].value,
+      valorBase: inputs[3].value,
+      valorExtra: inputs[4].value,
+      dias: Array.from(inputs).slice(5, 36).map(cb => cb.checked)
+    };
+    alunos.push(aluno);
+  });
+  dados[colaboradorAtual] = { alunos };
+  localStorage.setItem("planilhaMulti", JSON.stringify(dados));
+}
+
+function carregarDados() {
+  let dados = JSON.parse(localStorage.getItem("planilhaMulti")) || {};
+  let colaborador = dados[colaboradorAtual];
+  corpoTabela.innerHTML = "";
+  if (colaborador && colaborador.alunos.length > 0) {
+    colaborador.alunos.forEach(a => adicionarAluno(a));
+  }
+  calcularTotal();
+}
+
+// -------- LIMPAR QUADRADINHOS --------
+function limparQuadradinhos() {
+  if (!confirm("Deseja realmente apagar todos os quadradinhos marcados?")) return;
+  let checkboxes = corpoTabela.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(cb => cb.checked = false);
+  salvarDados();
+  calcularTotal();
+}
+
+// -------- LIMPAR LINHA ESPECÍFICA --------
+function limparLinha(botao) {
+  if (!confirm("Limpar apenas os quadradinhos desta linha?")) return;
+  let linha = botao.closest("tr");
+  let checkboxes = linha.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(cb => cb.checked = false);
+  salvarDados();
+  calcularTotal();
+}
+
+// -------- EXPORTAR --------
+function exportarExcel() {
+  calcularTotal();
+  let nomeArquivo = "Planilha_" + colaboradorAtual + ".xlsx";
+  let tabela = document.getElementById("planilha");
+  let dados = [];
+  tabela.querySelectorAll("tr").forEach(linha => {
+    let linhaDados = [];
+    linha.querySelectorAll("th, td").forEach(celula => {
+      if (celula.querySelector("input[type='text']")) linhaDados.push(celula.querySelector("input").value);
+      else if (celula.querySelector("input[type='number']")) linhaDados.push(celula.querySelector("input").value);
+      else if (celula.querySelector("select")) linhaDados.push(celula.querySelector("select").value);
+      else if (celula.querySelector("input[type='checkbox']")) linhaDados.push(celula.querySelector("input").checked ? "✓" : "");
+      else linhaDados.push(celula.innerText);
+    });
+    dados.push(linhaDados);
+  });
+  let planilha = XLSX.utils.aoa_to_sheet(dados);
+  let arquivo = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(arquivo, planilha, colaboradorAtual);
+  XLSX.writeFile(arquivo, nomeArquivo);
+}
+
+// -------- LIMPAR AO MUDAR MÊS --------
+document.getElementById("mesInput").addEventListener("change", () => {
+  salvarPeriodo();
+  limparQuadradinhos();
+});
+
+window.onload = function() {
+  carregarPeriodo();
+  carregarColaboradores();
+};
+</script>
+
+</body>
+</html>
